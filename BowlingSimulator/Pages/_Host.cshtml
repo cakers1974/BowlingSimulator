@@ -1,0 +1,25 @@
+﻿@page "/"
+@namespace BowlingSimulator.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+@{
+    Layout = "_Layout";
+}
+
+<script>
+    // Apply the system theme on initial load
+    function applySystemTheme() {
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        return prefersDark ? "dark" : "light";
+    }
+
+    // Apply the specified theme
+    function applyTheme(theme) {
+        if (theme === "dark") {
+            document.body.classList.add("dark-theme");
+        } else {
+            document.body.classList.remove("dark-theme");
+        }
+    }
+</script>
+
+<component type="typeof(App)" render-mode="ServerPrerendered" />

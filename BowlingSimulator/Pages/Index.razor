@@ -1,0 +1,212 @@
+﻿@page "/"
+@using Blazored.LocalStorage
+@inject ILocalStorageService localStorage
+@inject IJSRuntime JS
+
+<PageTitle>Bowling Simulator</PageTitle>
+
+<!-- Header Section with Dark Mode Button -->
+<header class="header">
+    <h3>Bowling Simulator</h3>
+    <div class="highest-score">High Score: @HighScore</div>
+    <button class="theme-toggle-btn" @onclick="ToggleTheme">@themeText Mode</button>
+</header>
+
+<!-- Scoreboard Section -->
+<div class="scoreboard-container">
+    <div class="scoreboard-grid">
+        @for( int frame = 0; frame < 10; frame++ ) {
+            <div>
+                <div class="frame-number">@(frame + 1)</div>
+                <div class="frame">
+                    <div class="rolls">
+                        <!-- this will display both roll counts in the frame, or it will display the strike (X) centerd -->
+                        @{
+                            string firstRoll = DisplayRoll( frame, 0 );
+                        }
+                        <div class="roll firstRoll @(firstRoll == "X" ? "strikeRoll" : "")">@firstRoll</div>
+                        @if( firstRoll != "X") {
+                            <div class="roll secondRoll">@DisplayRoll( frame, 1 )</div>
+                        }
+                    </div>
+                    <div class="total-score">@(game.RunningScores[frame]?.ToString() ?? "-")</div>
+                </div>
+            </div>
+        }
+        <!-- if the bonus frame should be shown -->
+        @if( game.CurrentFrame == 10 && (game.FrameScores[9] == null || game.Rolls[20] != null)) {
+            <div>
+                <div class="frame-number">Bonus</div>
+                <div class="frame">
+                    <div class="rolls">
+                        <div class="roll firstRoll">@DisplayRoll( 10, 0 )</div>
+                        <div class="roll secondRoll">@DisplayRoll( 10, 1 )</div>
+                    </div>
+                    <div class="total-score"></div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <!-- Game Actions -->
+    <div class="game-actions">
+        @if( !game.IsGameOver ) {
+            <button @onclick="RollBall">Roll the Ball</button>
+        }
+        else
+        {   // game is over
+            int score = game.GetScore();
+            if (score > HighScore) HighScore = score;
+
+            <p>The game is over! Your final score is: @score <a class="newGame" @onclick="ResetGame">new game</a></p>          
+        }
+
+        @if (!game.IsGameOver)
+        {
+            <div>
+                <button @onclick="CheaterRoll">Strike or Spare</button>
+                <button @onclick="LoserRoll">Gutter Ball</button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private BowlingGame game;
+    private int HighScore = 0;
+    private Random random;
+    private string themeText = "Dark";
+
+    protected override void OnInitialized()
+    {
+        game = new BowlingGame();
+        random = new Random();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Check for saved theme preference in local storage
+            var savedTheme = await localStorage.GetItemAsync<string>("theme");
+
+            if (string.IsNullOrEmpty(savedTheme))
+            {
+                // Detect and apply the system's theme
+                var systemTheme = await JS.InvokeAsync<string>("applySystemTheme");
+                await ApplyTheme(systemTheme);
+                themeText = systemTheme == "dark" ? "Light" : "Dark";
+            }
+            else
+            {
+                // Apply the saved theme
+                await ApplyTheme(savedTheme);
+                themeText = savedTheme == "dark" ? "Light" : "Dark";
+            }
+        }
+
+        // Trigger a re-render to update the themeText in the UI
+        StateHasChanged();
+    }
+
+
+    // Display rolls in the scoreboard (X for strike, / for spare, or number of pins knocked down)
+    private string DisplayRoll(int frame, int roll)
+    {
+        int rollIndex = frame * 2 + roll;
+
+        if (rollIndex >= game.PendingRoll) return ""; // Empty if the roll hasn't occurred yet
+
+        // special handling of bonus rolls
+        if( frame == 10 ) {
+            // if all 10 pins were knocked down for either bonus roll
+            if (game.Rolls[rollIndex] == 10) return "X"; // Strike
+        }
+        else {
+            // all other frames
+
+            // if this is the first roll of the frame and all pins were knocked down
+            if (roll == 0 && game.Rolls[rollIndex] == 10) return "X"; // Strike
+
+            // if this is the second roll of the frame and all the remaining pins were knocked down
+            if( roll == 1 && game.Rolls[rollIndex - 1] + game.Rolls[rollIndex] == 10) return "/"; // Spare
+        }
+
+        // Otherwise, display the number of pins knocked down
+        return game.Rolls[rollIndex]?.ToString() ?? "";
+    }
+
+
+
+    // Adds a random number of pins that were knocked out in the roll.
+    private void RollBall()
+    {
+        int pinsKnocked;
+
+        // special handling of bonus rolls
+        if( game.PendingRoll > 19) {
+            // all 10 pins are available on either bonus roll
+            pinsKnocked = random.Next(0, 11);
+        }
+        else {
+            // If PendingRoll % 2 == 0, then we are on the first roll of the current frame, otherwise it's the second roll.
+            // If it's the first roll in the frame, then 10 pins can be knocked down (using 11 because random.Next is
+            // exclusive of the upper bound).  If it's the second roll in the frame, then the random number will be 10 minus
+            // what was knocked down in the first roll.
+            pinsKnocked = random.Next(0, game.PendingRoll % 2 == 0 ? 11 : 11 - (game.Rolls[game.PendingRoll - 1] ?? 0));
+        }
+
+        game.Roll(pinsKnocked);
+    }
+
+
+    // rolls a strike on the first roll or a spare on the second roll
+    private void CheaterRoll()
+    {
+        // First roll of the frame or the bonus round
+        if( game.PendingRoll % 2 == 0  || game.PendingRoll > 19 ) 
+        {
+            game.Roll( 10 ); // Roll a strike
+        }
+        else // Second roll of the frame
+        {
+            int firstRollPins = game.Rolls[game.PendingRoll - 1] ?? 0; // Pins knocked down in the first roll of the frame
+            game.Roll( 10 - firstRollPins ); // Roll the exact number of pins to make it a spare
+        }
+    }
+
+
+    private void LoserRoll()
+    {
+        game.Roll(0); // Always roll a gutter ball
+    }
+
+
+    private void ResetGame()
+    {
+        game = new BowlingGame();
+    }
+
+
+    private async Task ToggleTheme()
+    {
+        if (themeText == "Dark")
+        {
+            await ApplyTheme("dark");
+            await localStorage.SetItemAsync("theme", "dark");
+            themeText = "Light";
+        }
+        else
+        {
+            await ApplyTheme("light");
+            await localStorage.SetItemAsync("theme", "light");
+            themeText = "Dark";
+        }
+    }
+
+
+    private async Task ApplyTheme(string theme)
+    {
+        await JS.InvokeVoidAsync("applyTheme", theme);
+    }
+}
